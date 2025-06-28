@@ -1,209 +1,227 @@
 'use client';
-import React, { useEffect, useState, useRef } from "react";
-import "./CanvasPage.css";
+import React, { useState, useEffect, useRef } from 'react';
+import './CanvasPage.css';
 
-export default function CanvasPage() {
+function Page() {
+  const [capturedAt, setCapturedAt] = useState(null);
+  const [width, setWidth] = useState(null);
+  const [height, setHeight] = useState(null);
+  const [maxSeverity, setMaxSeverity] = useState(null);
+  const [personList, setPersonList] = useState([]);
+  const [itemList, setItemList] = useState([]);
+  const [windowWidth, setWindowWidth] = useState(0);
+  const [windowHeight, setWindowHeight] = useState(0);
+  const [selectedRoom, setSelectedRoom] = useState(null);
   const canvasRef = useRef(null);
-  const [data, setData] = useState(null);
-  const [selectedRoom, setSelectedRoom] = useState(null); 
 
-  const originalWidth = 1280;
-  const originalHeight = 1280;
-  const FRAME_DATA_API_URL = "http://220.66.153.50:8080/frame";
-  const scaleRatio = 0.7; 
-  const padding = 10; 
+  const images = useRef({});
+  const [imagesLoaded, setImagesLoaded] = useState(false);
 
   useEffect(() => {
-    fetch(FRAME_DATA_API_URL)
-      .then((response) => {
-        if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
-        return response.json();
-      })
-      .then((responseData) => {
-        const personList = responseData.personList || [];
-        const itemList = responseData.itemList || [];
-        const stringData = [
-          `capturedAt: ${responseData.capturedAt}`,
-          `width: ${responseData.width}`,
-          `height: ${responseData.height}`,
-          `maxSeverity: ${responseData.maxSeverity}`,
-        ];
+    const imgMap = {
+      STAND: new Image(),
+      LYING: new Image(),
+      SIT: new Image(),
+      SQUAT: new Image(),
+      BOW: new Image(),
+      bed_left: new Image(),
+      bed_right: new Image(),
+      logo: new Image(),
+    };
 
-        personList.forEach((p, i) => {
-          stringData.push(`personList[${i}]: severity=${p.severity}, poseType=${p.poseType}`);
-        });
-        itemList.forEach((it, i) => {
-          stringData.push(`itemList[${i}]: itemType=${it.itemType}`);
-        });
+    imgMap.STAND.src = "/stand.png";
+    imgMap.LYING.src = "/lying.png";
+    imgMap.SIT.src = "/sit.png";
+    imgMap.SQUAT.src = "/squat.png";
+    imgMap.BOW.src = "/bow.png";
+    imgMap.bed_left.src = "/bed_left.png";
+    imgMap.bed_right.src = "/bed_right.png";
+    imgMap.logo.src = "logo.png";
 
-        const scale = (val, axis) => val * scaleRatio;
+    let loaded = 0;
+    const total = Object.keys(imgMap).length;
 
-        const scalePointsWithLabel = (xlist, ylist, label, severity) => ({
-          x1: scale(xlist[0], 'x'), y1: scale(ylist[0], 'y'),
-          x2: scale(xlist[1], 'x'), y2: scale(ylist[1], 'y'),
-          x3: scale(xlist[2], 'x'), y3: scale(ylist[2], 'y'),
-          x4: scale(xlist[3], 'x'), y4: scale(ylist[3], 'y'),
-          label, severity
-        });
-
-        const personPolygons = personList.map(entry =>
-          scalePointsWithLabel(entry.xlist, entry.ylist, "P", entry.severity)
-        );
-        const itemPolygons = itemList.map(entry =>
-          scalePointsWithLabel(entry.xlist, entry.ylist, entry.itemType)
-        );
-
-        setData({ stringData, personPolygons, itemPolygons });
-      })
-      .catch((error) => {
-        console.error("데이터를 받아오는 중 오류 발생:", error);
-        setData(null);
-      });
+    Object.values(imgMap).forEach((img) => {
+      img.onload = () => {
+        loaded++;
+        if (loaded === total) {
+          images.current = imgMap;
+          setImagesLoaded(true);
+        }
+      };
+    });
   }, []);
 
   useEffect(() => {
-    if (!data || selectedRoom !== 1) return; 
+    if (typeof window !== 'undefined') {
+      setWindowWidth(window.innerWidth);
+      setWindowHeight(window.innerHeight);
+
+      const handleResize = () => {
+        setWindowWidth(window.innerWidth);
+        setWindowHeight(window.innerHeight);
+      };
+
+      window.addEventListener('resize', handleResize);
+      return () => window.removeEventListener('resize', handleResize);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!selectedRoom) return;
+
+    const eventSource = new EventSource('http://220.66.153.50:8080/stream/realtime');
+    eventSource.onmessage = (event) => {
+      try {
+        const parsedData = JSON.parse(event.data);
+        setCapturedAt(parsedData.capturedAt);
+        setWidth(parsedData.width);
+        setHeight(parsedData.height);
+        setMaxSeverity(parsedData.maxSeverity);
+        setPersonList(parsedData.personList || []);
+        setItemList(parsedData.itemList || []);
+      } catch (error) {
+        console.error('Error parsing JSON data:', error);
+      }
+    };
+
+    eventSource.onerror = (error) => {
+      console.error('SSE connection error:', error);
+      eventSource.close();
+    };
+
+    return () => eventSource.close();
+  }, [selectedRoom]);
+
+  useEffect(() => {
+    if (!canvasRef.current || !width || !height || !imagesLoaded) return;
 
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext('2d');
 
-    const allPoints = [...data.personPolygons, ...data.itemPolygons].flatMap(p => [
-      { x: p.x1, y: p.y1 },
-      { x: p.x2, y: p.y2 },
-      { x: p.x3, y: p.y3 },
-      { x: p.x4, y: p.y4 },
-    ]);
+    canvas.width = width;
+    canvas.height = height;
 
-    const minX = Math.min(...allPoints.map(p => p.x));
-    const maxX = Math.max(...allPoints.map(p => p.x));
-    const minY = Math.min(...allPoints.map(p => p.y));
-    const maxY = Math.max(...allPoints.map(p => p.y));
+    const aspectRatio = width / height;
+    let canvasWidth = windowWidth * 0.6;
+    let canvasHeight = canvasWidth / aspectRatio;
 
-    const extraTopPadding = 30;
+    if (canvasHeight > windowHeight * 0.8) {
+      canvasHeight = windowHeight * 0.8;
+      canvasWidth = canvasHeight * aspectRatio;
+    }
 
-    const contentWidth = maxX - minX + padding * 2;
-    const contentHeight = maxY - minY + padding * 2 + extraTopPadding;
+    canvas.style.width = `${canvasWidth}px`;
+    canvas.style.height = `${canvasHeight}px`;
 
-    canvas.width = contentWidth;
-    canvas.height = contentHeight;
+    ctx.clearRect(0, 0, width, height);
 
-    const offsetX = minX - padding;
-    
-    const offsetY = minY - padding - extraTopPadding;
-    const translate = (x, y) => [x - offsetX, y - offsetY];
+    ctx.fillStyle = 'gray';
+    ctx.font = 'bold 40px Arial';
+    ctx.fillText('Data Visualization', 10, 50);
 
-    const getCenter = (p) => ({
-      x: (p.x1 + p.x2 + p.x3 + p.x4) / 4,
-      y: (p.y1 + p.y2 + p.y3 + p.y4) / 4
-    });
+    personList.forEach((person) => {
+      const x = person.centerX - person.width / 2;
+      const y = person.centerY - person.height / 2;
 
-    ctx.fillStyle = "#e3f2fd";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    data.personPolygons.forEach(p => {
       ctx.beginPath();
-      ctx.moveTo(...translate(p.x1, p.y1));
-      ctx.lineTo(...translate(p.x2, p.y2));
-      ctx.lineTo(...translate(p.x3, p.y3));
-      ctx.lineTo(...translate(p.x4, p.y4));
-      ctx.closePath();
-      ctx.strokeStyle = "red";
-      ctx.lineWidth = 2;
+      ctx.arc(person.centerX, person.centerY, person.width / 2, 0, Math.PI * 2);
+      switch (person.severity) {
+        case 'FALL': ctx.fillStyle = 'rgba(255, 0, 0, 0.5)'; break;
+        case 'DANGER': ctx.fillStyle = 'rgba(255, 165, 0, 0.5)'; break;
+        case 'CAUTION': ctx.fillStyle = 'rgba(255, 255, 0, 0.5)'; break;
+        case 'NORMAL': ctx.fillStyle = 'rgba(0, 255, 0, 0.5)'; break;
+        default: ctx.fillStyle = 'rgba(128, 128, 128, 0.5)';
+      }
+      ctx.fill();
+      ctx.strokeStyle = '#000';
       ctx.stroke();
 
-      ctx.fillStyle =
-        p.severity === "DANGER" ? "rgba(255,0,0,0.4)" :
-        p.severity === "FALL" ? "rgba(255,255,0,0.4)" :
-        "rgba(0,0,0,0.1)";
-      ctx.fill();
-
-      const { x, y } = getCenter(p);
-      ctx.fillStyle = "red";
-      ctx.font = "bold 20px Arial";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(p.label, ...translate(x, y));
+      const poseKey = (person.poseType || "STAND").toUpperCase();
+      const poseImage = images.current[poseKey] || images.current.STAND;
+      ctx.drawImage(poseImage, x, y, person.width, person.height);
+      
     });
 
-    data.itemPolygons.forEach(p => {
-      ctx.beginPath();
-      ctx.moveTo(...translate(p.x1, p.y1));
-      ctx.lineTo(...translate(p.x2, p.y2));
-      ctx.lineTo(...translate(p.x3, p.y3));
-      ctx.lineTo(...translate(p.x4, p.y4));
-      ctx.closePath();
-      ctx.strokeStyle = "blue";
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.fillStyle = "rgba(0,0,255,0.2)";
-      ctx.fill();
+    itemList.forEach((item) => {
+      const x = item.centerX - item.width / 2;
+      const y = item.centerY - item.height / 2;
 
-      const { x, y } = getCenter(p);
-      ctx.fillStyle = "blue";
-      ctx.font = "bold 16px Arial";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(p.label, ...translate(x, y));
+      const bedImage = item.horz === 'LEFT' ? images.current.bed_left : images.current.bed_right;
+      ctx.drawImage(bedImage, x, y, item.width, item.height);
+
+      ctx.fillStyle = '#000';
+      ctx.font = '12px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`bed${item.ID}`, item.centerX, item.centerY);
     });
-
-  }, [data,selectedRoom]);
+  }, [width, height, personList, itemList, windowWidth, windowHeight, imagesLoaded]);
 
   return (
-    <>
-    <div className="top-bar">
-      <div className="logo">VIDA</div>
+    <div>
       <div className="navbar">
-        <button onClick={() => window.location.reload()}>Home</button>
-        <button onClick={() => alert("Device 페이지는 구현 예정입니다.")}>Device</button>
-        <button onClick={() => alert("Record 페이지는 구현 예정입니다.")}>Record</button>
+        <div className="logo">
+          <img src="logo.png" alt="Logo" />
+        </div>
       </div>
-    </div>  
-    
-    <div className="container">
-      <div className="left-panel">
-        <h2>데이터 목록</h2>
-        {data ? (
-          <ul>
-            {data.stringData.map((item, index) => (
-              <li key={index}>{item}</li>
-            ))}
-          </ul>
-        ) : (
-          <p>Loading...</p>
-        )}
-      </div>
-    {selectedRoom === 1 && (
-      <div className="center-panel">
-        <canvas ref={canvasRef} className="canvas" />
-      </div>
-    )}
-      <div className="right-panel">
-        <div className="legend">
-          <div className="legend-item">
-            <div className="dot danger"></div>
-            <span>Danger</span>
+
+      <div className="container">
+        <div className="left-panel">
+          <div className="left-section section1">
+            <h2>Basic Info</h2>
+            {capturedAt && maxSeverity ? (
+              <div>
+                <p><strong>Captured At:</strong> {capturedAt}</p>
+                <p><strong>Max Severity:</strong> {maxSeverity}</p>
+              </div>
+            ) : (
+              <p>Waiting for data...</p>
+            )}
           </div>
-          <div className="legend-item">
-            <div className="dot fall"></div>
-            <span>Fall</span>
+          <div className="left-section section2">
+            <h2>Device Info</h2>
+            <p><strong>Device:</strong> Jetson Orin Nano Super</p>
+            <p><strong>OS:</strong> Jetpack 6.2</p>
+            <p><strong>CAMERA:</strong> Reolink Fisheye-view Camera FE-P</p>
           </div>
-          <div className="legend-item">
-            <div className="dot safe"></div>
-            <span>안전</span>
-          </div>  
-          
-          <div className="room-list">
-          <button className="room-button" onClick={() => setSelectedRoom(1)}>1병실</button>
-          <button className="room-button" onClick={() => setSelectedRoom(2)}>2병실</button>
-          <button className="room-button" onClick={() => setSelectedRoom(3)}>3병실</button>
-          <button className="room-button" onClick={() => setSelectedRoom(4)}>4병실</button>
-      
+          <div className="left-section section3">
+            <p style={{ color: 'gray' }}>🔔 실시간 알림 공간 (예정)</p>
+          </div>
+        </div>
+
+        <div className="center-panel">
+          {selectedRoom && width && height ? (
+            <div className="canvas-container">
+              <canvas ref={canvasRef} style={{ border: '1px solid #000' }} />
+              <p><strong>Resolution:</strong> {width}x{height}</p>
+            </div>
+          ) : (
+            <p>Select a room to start visualization.</p>
+          )}
+        </div>
+
+        <div className="right-panel">
+          <div className="right-section right-half">
+            <h2>Room Selection</h2>
+            <button className="room-button" onClick={() => setSelectedRoom("101")}>101호</button>
+            <button className="room-button" onClick={() => setSelectedRoom("102")}>102호</button>
+            <button className="room-button" onClick={() => setSelectedRoom("103")}>103호</button>
+          </div>
+          <div className="right-section right-half">
+            <div className="legend">
+              <h3>Severity Levels</h3>
+              <div className="legend-item"><span className="dot fall"></span> Fall</div>
+              <div className="legend-item"><span className="dot danger"></span> Danger</div>
+              <div className="legend-item"><span className="dot caution"></span> Caution</div>
+              <div className="legend-item"><span className="dot normal"></span> Normal</div>
+            </div>
           </div>
         </div>
       </div>
     </div>
-  </>      
   );
 }
+
+export default Page;
+
